@@ -5,11 +5,16 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  lint-test-and-artifacts:
     runs-on: ubuntu-latest
+
+    env:
+      # ปิด proxy artifacts ของ MLflow เผื่อบางเวอร์ชันมอง env นี้
+      MLFLOW_ENABLE_ARTIFACTS_PROXY: "false"
 
     steps:
       - name: Checkout
+      # ทำงานที่ root ของ repo (ค่า default)
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -28,13 +33,12 @@ jobs:
           flake8 scripts app --count --select=E9,F63,F7,F82 --show-source --statistics
           flake8 scripts app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-      # Step 1 (tiny) เพื่อให้มี mlruns/**/reports/validation.json โดยไม่ต้องโหลด 70k จริง
-      # Step 1 (tiny) เพื่อสร้าง validation.json ใน mlruns
+      # Step 1 (tiny): จะสร้าง MLflow run และ artifacts/reports/validation.json
       - name: Step 1 - Data Validation (tiny)
         run: |
           python scripts/1_data_validation.py --tiny
 
-      # ✅ สร้าง artifacts/fashion_mnist.csv สำหรับสเต็ปถัดไป (กรณี --tiny ไม่ได้เซฟ CSV)
+      # กันกรณี --tiny ของคุณยังไม่เขียน CSV: เขียน CSV จิ๋วให้ preprocessing ใช้ต่อ
       - name: Ensure tiny CSV for preprocessing
         run: |
           python - << 'PY'
@@ -53,14 +57,33 @@ jobs:
               print("[CI] reuse", csv)
           PY
 
-      # Step 2 เพื่อสร้าง artifacts/splits/*.csv (สเกล 0..1)
       - name: Step 2 - Preprocessing
         run: |
           python scripts/2_data_preprocessing.py
 
-
       - name: Run unit tests (exclude e2e)
-        env:
-          MLFLOW_ENABLE_ARTIFACTS_PROXY: "false"
         run: |
           python -m pytest -q -m "not e2e" --maxfail=1 --disable-warnings
+
+      # แสดง tree ของ mlruns ใน log เพื่อยืนยันว่าถูกสร้าง
+      - name: Show mlruns tree
+        run: |
+          python - << 'PY'
+          import os, pathlib
+          p = pathlib.Path("mlruns")
+          print("mlruns exists?", p.exists())
+          if p.exists():
+              for root, dirs, files in os.walk("mlruns"):
+                  if files:
+                      print(root, "files:", len(files))
+          PY
+
+      # อัปโหลด mlruns เป็น artifact เพื่อให้ดาวน์โหลดได้จากหน้า workflow
+      - name: Upload mlruns artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlruns-${{ github.run_id }}
+          path: mlruns/
+          if-no-files-found: warn
+          retention-days: 7
