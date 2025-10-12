@@ -1,189 +1,60 @@
-# ML Project — Fashion-MNIST MLOps Workflow (MLflow + FastAPI)
+name: CI
 
-เวิร์กโฟลว์ครบ 4 ขั้นตอนสำหรับงานรายวิชา:
-1) **Data Validation** (รวม Anomaly detection)  
-2) **Data Preprocessing** (สเกล 0..1 + แบ่ง train/val/test)  
-3) **Model Training** (หลายรัน: PCA → LogisticRegression)  
-4) **Model Evaluation & Export** (เลือก best → ประเมินบน test → เซฟสำหรับเสิร์ฟ)  
-จากนั้น **Serve API ด้วย FastAPI** และ **ทดสอบการพยากรณ์จริง**
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
 
-- **Public dataset:** Fashion-MNIST (**70,000 แถว**, 10 คลาส)  
-  โหลดผ่าน `sklearn.fetch_openml("Fashion-MNIST", version=1)` ครั้งแรกเท่านั้น แล้วแคชเป็น `artifacts/fashion_mnist.csv`
-- **MLflow:** ใช้ **local file store** (`./mlruns`) — ไม่ต้องเปิด MLflow server
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
 
----
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-## 0) เตรียมสภาพแวดล้อม (Conda)
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
-`environment.yml` (มีในโปรเจกต์):
-```yaml
-name: mlflow-fashion
-channels:
-  - conda-forge
-dependencies:
-  - python=3.11
-  - pip
-  - numpy=1.26
-  - pandas=2.2
-  - scikit-learn=1.5
-  - scipy
-  - uvicorn=0.30
-  - pytest=8.3
-  - pip:
-      - mlflow==2.14.1
-      - fastapi==0.115.0
-      - pydantic==2.9.2
-      - requests>=2.32
-      - "setuptools<81"
-สร้างและเปิดใช้ env (Windows PowerShell/CMD):
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt "setuptools<81" pytest flake8 httpx
 
-bat
-Copy code
-conda env remove -n mlflow-fashion -y  ^  &&  ^
-conda env create -f environment.yml     ^  &&  ^
-conda activate mlflow-fashion           ^  &&  ^
-python -m pip install --upgrade pip
-เคลียร์ตัวแปร MLflow ที่อาจค้างจากรอบก่อน (กันชนกับ server/proxy):
+      - name: Lint (flake8)
+        run: |
+          flake8 scripts app --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 scripts app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-bat
-Copy code
-set MLFLOW_TRACKING_URI=
-set MLFLOW_ARTIFACTS_URI=
-set MLFLOW_ENABLE_ARTIFACTS_PROXY=
-1) Data Validation (ดึง Fashion-MNIST 70,000 + รายงาน + Anomaly detection)
-สคริปต์จะบังคับ MLflow ไปที่ file:///.../mlruns โดยอัตโนมัติ
+      - name: Prepare tiny artifacts (no big downloads)
+        env:
+          MLFLOW_TRACKING_URI: file:./mlruns
+        run: |
+          python - << 'PY'
+          import pathlib, numpy as np, pandas as pd
+          ART = pathlib.Path("artifacts"); SPL = ART/"splits"
+          SPL.mkdir(parents=True, exist_ok=True)
+          d = 784; cols = [f"px{i}" for i in range(d)] + ["label"]
+          rng = np.random.default_rng(42)
+          def mk(n):
+              X = rng.random((n,d), dtype=np.float32)
+              y = rng.integers(0,10,size=(n,1),dtype=np.int8)
+              return pd.DataFrame(np.hstack([X,y]), columns=cols)
+          train, val, test = mk(40), mk(10), mk(10)
+          ART.mkdir(exist_ok=True)
+          pd.concat([train,val,test]).to_csv(ART/"fashion_mnist.csv", index=False)
+          train.to_csv(SPL/"train.csv", index=False)
+          val.to_csv(SPL/"val.csv", index=False)
+          test.to_csv(SPL/"test.csv", index=False)
+          print("[CI] tiny artifacts ready")
+          PY
 
-bat
-Copy code
-python scripts\1_data_validation.py
-ผลลัพธ์:
-
-artifacts/fashion_mnist.csv (70k แถว)
-
-รายงาน mlruns/**/artifacts/reports/validation.json (มี anomalies/outliers/duplicates ฯลฯ)
-
-เดโมเร็ว (CI/ออฟไลน์) ใช้โหมดเล็ก:
-
-bat
-Copy code
-python scripts\1_data_validation.py --tiny
-2) Data Preprocessing (สเกล 0..1 + แบ่งชุด)
-bat
-Copy code
-python scripts\2_data_preprocessing.py
-ผลลัพธ์:
-
-artifacts/splits/train.csv, val.csv, test.csv
-(train ≈56k, val ≈7k, test ≈7k)
-
-3) Model Training (หลายรัน: PCA → LogisticRegression)
-bat
-Copy code
-python scripts\3_model_training.py
-ผลลัพธ์:
-
-บันทึกแต่ละรันลง mlruns/... (params + metrics + artifacts)
-
-artifacts/candidates.json — สรุปผลรัน/พารามิเตอร์
-
-4) Model Evaluation & Export (เลือก best + ประเมิน test + พร้อมเสิร์ฟ)
-bat
-Copy code
-python scripts\4_model_evaluation.py
-ผลลัพธ์:
-
-artifacts/best_run.json — run ที่ดีที่สุด + metric บน test
-
-โมเดลสำหรับเสิร์ฟ: artifacts/deploy/fashion_mnist_clf/
-
-5) (ตัวเลือก) เปิด MLflow UI แสดงผลการทดลอง
-bat
-Copy code
-mlflow ui --host 0.0.0.0 --port 5000
-เปิดเบราว์เซอร์: http://127.0.0.1:5000
-(โชว์ experiments, metrics, confusion matrix, artifacts)
-
-6) Serve API (FastAPI + Uvicorn)
-เปิดเซิร์ฟเวอร์:
-
-bat
-Copy code
-uvicorn app.main:app --host 0.0.0.0 --port 8080
-ตรวจสุขภาพ:
-
-bat
-Copy code
-curl http://127.0.0.1:8080/health
-ทดสอบพยากรณ์ (single)
-สร้างสคริปต์เล็ก:
-
-python
-Copy code
-# scripts/test_api.py
-import requests, pandas as pd
-df = pd.read_csv("artifacts/splits/test.csv")
-row = df.iloc[0]
-pixels = row.drop("label").astype(float).tolist()   # 784 ค่า (0..1)
-r = requests.post("http://127.0.0.1:8080/predict", json={"pixels": pixels}, timeout=30)
-print("true_label:", int(row["label"]))
-print("response:", r.json())
-รัน:
-
-bat
-Copy code
-python scripts\test_api.py
-API รองรับ autoscale หากส่งค่า 0..255 — เพื่อป้องกัน training–serving skew
-
-7) (ตัวเลือก) รัน CI/Unit Tests แบบเบา (เหมือน GitHub Actions)
-ติดตั้ง dev tools:
-
-bat
-Copy code
-pip install pytest flake8 httpx
-รันเทสต์ (ข้าม e2e ที่ยิง HTTP จริง):
-
-bat
-Copy code
-python -m pytest -q --ignore=scripts/test_api.py --maxfail=1 --disable-warnings
-โปรเจกต์มี unit test สำหรับ API แบบใช้ TestClient (ไม่ต้องเปิดพอร์ต),
-และเทสต์ preprocessing/validation อย่างน้อย 3 เคส ตามข้อกำหนดรายวิชา
-
-โครงสร้างโปรเจกต์
-bash
-Copy code
-ml-project/
-├─ scripts/
-│  ├─ 1_data_validation.py
-│  ├─ 2_data_preprocessing.py
-│  ├─ 3_model_training.py
-│  └─ 4_model_evaluation.py
-├─ app/
-│  └─ main.py                # FastAPI (มี /health, /predict, /predict_batch)
-├─ tests/
-│  ├─ test_preprocessing.py
-│  ├─ test_api_unit.py
-│  └─ test_validation_anomalies.py
-├─ artifacts/                # (generated) CSV, splits, deploy/
-├─ mlruns/                   # (generated) MLflow runs/artifacts
-├─ environment.yml
-├─ requirements.txt
-└─ README.md
-.gitignore (แนะนำ)
-เพื่อไม่ให้ไฟล์ใหญ่ขึ้นรีโป:
-
-markdown
-Copy code
-mlruns/
-artifacts/
-data/
-datasets/
-models/
-checkpoints/
-*.csv *.npy *.npz *.pkl *.joblib
-__pycache__/ *.pyc .DS_Store .vscode/ .idea/
-ทิปแก้ปัญหาเร็ว
-Malformed experiment 'artifacts' → อย่าสร้าง mlruns/artifacts/ เอง; ถ้าเผลอสร้าง ให้ลบ mlruns ทั้งโฟลเดอร์แล้วรันใหม่
-
-ไปชี้ MLflow server 127.0.0.1:5000 → ล้าง env สามตัวด้านบน (Tracking/Artifacts/Proxy)
-
-PCA Warning (“X has feature names”): ข้ามได้ หรือส่ง df.values ตอน predict ใน API
+      - name: Run unit tests
+        env:
+          MLFLOW_TRACKING_URI: file:./mlruns
+          MLFLOW_ENABLE_ARTIFACTS_PROXY: "false"
+        run: |
+          python -m pytest -q --ignore=scripts/test_api.py --maxfail=1 --disable-warnings

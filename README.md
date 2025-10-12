@@ -1,91 +1,131 @@
-นี่คือไฟล์ README.md (ฉบับอัปเดตสำหรับโปรเจกต์ Fashion-MNIST + MLflow + FastAPI) — ก็อปวางทับไฟล์เดิมได้เลย:
 
-# ML Project — MLflow Workflow (Fashion-MNIST)
+ML Project — Fashion-MNIST MLOps Workflow (MLflow + FastAPI)
 
-เวิร์กโฟลว์ครบ 4 ขั้นตอน:  
-**1) Data Validation → 2) Data Preprocessing → 3) Model Training (หลายรอบ) → 4) Model Evaluation & Save for Serving (FastAPI)**
+0) Environment (Conda)
+----------------------
+Use the provided environment.yml.
 
-- **Public dataset:** Fashion-MNIST (70,000 แถว, 10 คลาส)  
-- โหลดผ่าน `sklearn.fetch_openml("Fashion-MNIST", version=1)` ครั้งแรกเท่านั้น แล้วเก็บเป็น `artifacts/fashion_mnist.csv`  
-- **MLflow:** ใช้ **local file store** (`./mlruns`) ไม่ต้องเปิด MLflow server
+Create & activate:
+  conda env remove -n mlflow-fashion -y  ^  &&  ^
+  conda env create -f environment.yml     ^  &&  ^
+  conda activate mlflow-fashion           ^  &&  ^
+  python -m pip install --upgrade pip
 
-## Quickstart
+Clear any old MLflow env to avoid pointing at servers:
+  set MLFLOW_TRACKING_URI=
+  set MLFLOW_ARTIFACTS_URI=
+  set MLFLOW_ENABLE_ARTIFACTS_PROXY=
 
-```bash
-# 0) ติดตั้งไลบรารี
-pip install -r requirements.txt
+1) Data Validation (download Fashion-MNIST 70,000 + anomaly report)
+-------------------------------------------------------------------
+  python scripts\1_data_validation.py
 
-# 1) รันตามลำดับงาน
-python scripts/1_data_validation.py      # ดึง Fashion-MNIST + ตรวจสอบ + เซฟ CSV
-python scripts/2_data_preprocessing.py   # แบ่ง train/val/test และสเกล 0..1
-python scripts/3_model_training.py       # เทรนหลายรอบ (PCA+LogReg) + log ที่ MLflow
-python scripts/4_model_evaluation.py     # เลือก best → ประเมินบน test → เซฟโมเดลสำหรับเสิร์ฟ
+Results:
+- artifacts\fashion_mnist.csv (70k rows)
+- validation report in mlruns\**\artifacts\reports\validation.json
+  (contains anomalies: out-of-range, duplicates, imbalance, z-score outliers)
 
-# 2) เปิด API (ต้องมีโมเดลจากขั้นตอน 4 แล้ว)
-# ทางเลือก A: uvicorn CLI (รันที่รากโปรเจกต์)
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+Tip (fast demo / CI without network):
+  python scripts\1_data_validation.py --tiny
 
-# ทางเลือก B: รันเป็นสคริปต์ (ถ้าไฟล์ app/main.py ใช้ uvicorn.run(app, ...))
-# python app/main.py
+2) Data Preprocessing (scale to 0..1 + train/val/test splits)
+--------------------------------------------------------------
+  python scripts\2_data_preprocessing.py
 
-ทดสอบ API
-# ตรวจสุขภาพ
-curl http://127.0.0.1:8080/health
+Results:
+- artifacts\splits\train.csv
+- artifacts\splits\val.csv
+- artifacts\splits\test.csv
 
+3) Model Training (multiple runs: PCA -> LogisticRegression)
+------------------------------------------------------------
+  python scripts\3_model_training.py
 
-ตัวอย่างทดสอบด้วย Python (อ่านหนึ่งภาพจาก test.csv แล้วยิงไป /predict):
+Results:
+- MLflow runs + metrics/artifacts under .\mlruns
+- artifacts\candidates.json
 
-# scripts/test_api.py
-import requests, pandas as pd
-df = pd.read_csv("artifacts/splits/test.csv")
-row = df.iloc[0]
-pixels = row.drop("label").astype(float).tolist()
-r = requests.post("http://127.0.0.1:8080/predict", json={"pixels": pixels}, timeout=30)
-print("true_label:", int(row["label"]))
-print("response:", r.json())
+4) Model Evaluation & Export (pick best, test eval, export for serving)
+------------------------------------------------------------------------
+  python scripts\4_model_evaluation.py
 
+Results:
+- artifacts\best_run.json
+- artifacts\deploy\fashion_mnist_clf\   (exported model, ready to serve)
 
-รัน:
+5) (Optional) MLflow UI
+-----------------------
+  mlflow ui --host 0.0.0.0 --port 5000
+Open: http://127.0.0.1:5000
 
-python scripts/test_api.py
+6) Serve API (FastAPI + Uvicorn) and Test
+------------------------------------------
+Start server:
+  uvicorn app.main:app --host 0.0.0.0 --port 8080
 
-Artifacts ที่ถูกสร้าง
+Health check:
+  curl http://127.0.0.1:8080/health
 
-artifacts/fashion_mnist.csv — ข้อมูลทั้งหมด (70k แถว)
+Test single prediction (example script):
+  python scripts\test_api.py
+  (This reads one row from artifacts\splits\test.csv and POSTs to /predict)
 
-artifacts/splits/{train,val,test}.csv — ชุดแบ่งข้อมูล (ประมาณ 56k / 7k / 7k)
+Notes:
+- API auto-scales inputs in 0..255 to 0..1 to prevent training-serving skew.
+- Endpoints: /health, /predict (one item), /predict_batch (list of items).
 
-artifacts/candidates.json — ผลรันการฝึกหลายรอบ (PCA + ค่าพารามิเตอร์ C)
+7) (Optional) Run unit tests like CI
+------------------------------------
+Install dev tools:
+  pip install pytest flake8 httpx
 
-artifacts/best_run.json — สรุป run ที่ดีที่สุด + metric บน test
+Run tests (skip real HTTP e2e):
+  python -m pytest -q --ignore=scripts/test_api.py --maxfail=1 --disable-warnings
 
-artifacts/deploy/fashion_mnist_clf/ — โฟลเดอร์โมเดลสำหรับเสิร์ฟด้วย FastAPI
-
-โครงสร้าง
+Project Structure
+-----------------
 ml-project/
-├─ .github/workflows/main.yml
 ├─ scripts/
 │  ├─ 1_data_validation.py
 │  ├─ 2_data_preprocessing.py
 │  ├─ 3_model_training.py
 │  └─ 4_model_evaluation.py
-├─ tests/
-│  └─ test_preprocessing.py
 ├─ app/
-│  └─ main.py
-├─ Dockerfile
+│  └─ main.py                (FastAPI: /health, /predict, /predict_batch)
+├─ tests/                    (unit tests for preprocessing, validation, API)
+├─ artifacts/                (generated: csv, splits, deploy/)
+├─ mlruns/                   (generated by MLflow)
+├─ environment.yml
 ├─ requirements.txt
-└─ README.md
+└─ README.txt
 
-MLflow (โลคัล)
+Checks to confirm "deployed"
+---------------------------
+- Exported model exists: artifacts\deploy\fashion_mnist_clf\
+- Uvicorn is running and GET /health returns 200
 
-สคริปต์ตั้งค่า mlflow.set_tracking_uri(file:///.../mlruns) ให้โดยอัตโนมัติ — ถ้าอยากเปิด UI:
+.gitignore (recommended)
+------------------------
+mlruns/
+artifacts/
+data/
+datasets/
+models/
+checkpoints/
+*.csv *.npy *.npz *.pkl *.joblib
+__pycache__/ *.pyc .DS_Store .vscode/ .idea/
 
-mlflow ui --host 0.0.0.0 --port 5000
-# เปิดเบราว์เซอร์ที่ http://127.0.0.1:5000
+Troubleshooting
+---------------
+- Malformed experiment 'artifacts':
+    Remove mlruns\artifacts if accidentally created; or remove entire mlruns.
+- MLflow tries to hit http://127.0.0.1:5000:
+    Clear env vars (see section 0).
+- PCA warning "X has feature names...":
+    Safe to ignore, or pass df.values to model.predict in API.
 
-.gitignore ที่แนะนำ (กันไฟล์ใหญ่ขึ้น Git)
-
-ไม่ควร push artifacts/, mlruns/, และไฟล์ dataset ที่สร้างซ้ำได้
-
-ดูตัวอย่างในไฟล์ .gitignore ของโปรเจกต์นี้
+Credits
+-------
+Dataset: Fashion-MNIST via sklearn.fetch_openml("Fashion-MNIST", version=1)
+Tracking: MLflow (local file store: ./mlruns)
+Serving: FastAPI + Uvicorn
