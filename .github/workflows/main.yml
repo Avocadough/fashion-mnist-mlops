@@ -1,60 +1,45 @@
-name: CI
-
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-
-jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt "setuptools<81" pytest flake8 httpx
-
-      - name: Lint (flake8)
-        run: |
-          flake8 scripts app --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 scripts app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-      - name: Prepare tiny artifacts (no big downloads)
-        env:
-          MLFLOW_TRACKING_URI: file:./mlruns
-        run: |
-          python - << 'PY'
-          import pathlib, numpy as np, pandas as pd
-          ART = pathlib.Path("artifacts"); SPL = ART/"splits"
-          SPL.mkdir(parents=True, exist_ok=True)
-          d = 784; cols = [f"px{i}" for i in range(d)] + ["label"]
-          rng = np.random.default_rng(42)
-          def mk(n):
-              X = rng.random((n,d), dtype=np.float32)
-              y = rng.integers(0,10,size=(n,1),dtype=np.int8)
-              return pd.DataFrame(np.hstack([X,y]), columns=cols)
-          train, val, test = mk(40), mk(10), mk(10)
-          ART.mkdir(exist_ok=True)
-          pd.concat([train,val,test]).to_csv(ART/"fashion_mnist.csv", index=False)
-          train.to_csv(SPL/"train.csv", index=False)
-          val.to_csv(SPL/"val.csv", index=False)
-          test.to_csv(SPL/"test.csv", index=False)
-          print("[CI] tiny artifacts ready")
-          PY
-
-      - name: Run unit tests
-        env:
-          MLFLOW_TRACKING_URI: file:./mlruns
-          MLFLOW_ENABLE_ARTIFACTS_PROXY: "false"
-        run: |
-          python -m pytest -q --ignore=scripts/test_api.py --maxfail=1 --disable-warnings
+# เพิ่มอีก job ใน .github/workflows/ci.yml
+e2e-api:
+  needs: lint-and-test
+  runs-on: ubuntu-latest
+  env:
+    MLFLOW_TRACKING_URI: file:./mlruns
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with: { python-version: "3.11" }
+    - name: Install deps
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt "setuptools<81>" httpx uvicorn
+    - name: Prepare tiny deploy model
+      run: |
+        python - << 'PY'
+        import tempfile, mlflow.pyfunc, numpy as np, pathlib, shutil
+        class D(mlflow.pyfunc.PythonModel):
+            def predict(self, context, X): return np.zeros((len(X),), dtype=int)
+        tmp = tempfile.mkdtemp()
+        mlflow.pyfunc.save_model(path=tmp, python_model=D())
+        dst = pathlib.Path("artifacts/deploy/fashion_mnist_clf")
+        shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(tmp, dst)
+        print("[E2E] tiny deploy model ready at", dst)
+        PY
+    - name: Start API in background
+      run: |
+        uvicorn app.main:app --host 127.0.0.1 --port 8080 &
+        echo $! > uvicorn.pid
+        sleep 2
+    - name: Call /health and /predict
+      run: |
+        python - << 'PY'
+        import requests, json
+        r = requests.get("http://127.0.0.1:8080/health", timeout=10); r.raise_for_status()
+        pixels = [0.0]*784
+        r2 = requests.post("http://127.0.0.1:8080/predict", json={"pixels": pixels}, timeout=10); r2.raise_for_status()
+        print("health:", r.json()); print("predict:", r2.json())
+        PY
+    - name: Stop API
+      if: always()
+      run: |
+        kill $(cat uvicorn.pid) || true
