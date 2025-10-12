@@ -71,4 +71,4 @@ def predict_batch(items: FashionBatch):
 
 if __name__ == "__main__":
     # ✅ ส่งอ็อบเจกต์ app โดยตรง เพื่อให้ทำงานได้แม้รันเป็นสคริปต์
-    uvicorn.run(app, host="0.0.0.0", port=8080, reload=False)
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
