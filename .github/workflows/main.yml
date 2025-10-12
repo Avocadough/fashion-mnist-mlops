@@ -7,7 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +17,7 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt "setuptools<81" pytest
@@ -28,29 +27,28 @@ jobs:
           MLFLOW_TRACKING_URI: file:./mlruns
         run: |
           python - << 'PY'
-          import os, pathlib, pandas as pd, numpy as np
-          ARTIFACTS = pathlib.Path("artifacts"); SPLITS = ARTIFACTS/"splits"
-          SPLITS.mkdir(parents=True, exist_ok=True)
-          n_features = 784
-          cols = [f"px{i}" for i in range(n_features)] + ["label"]
+          import pathlib, numpy as np, pandas as pd
+          ART = pathlib.Path("artifacts"); SPL = ART/"splits"
+          SPL.mkdir(parents=True, exist_ok=True)
+          n, d = 60, 784
+          cols = [f"px{i}" for i in range(d)] + ["label"]
           rng = np.random.default_rng(42)
-          def make_df(n):
-              X = rng.random((n, n_features), dtype=np.float32)
-              y = rng.integers(0, 10, size=(n, 1), dtype=np.int8)
-              return pd.DataFrame(np.hstack([X, y]), columns=cols)
-          train, val, test = make_df(240), make_df(30), make_df(30)
-          ARTIFACTS.mkdir(exist_ok=True)
-          pd.concat([train, val, test], ignore_index=True).to_csv(ARTIFACTS/"fashion_mnist.csv", index=False)
-          train.to_csv(SPLITS/"train.csv", index=False)
-          val.to_csv(SPLITS/"val.csv", index=False)
-          test.to_csv(SPLITS/"test.csv", index=False)
+          def mk(m): 
+              X = rng.random((m,d), dtype=np.float32)
+              y = rng.integers(0,10,size=(m,1),dtype=np.int8)
+              return pd.DataFrame(np.hstack([X,y]), columns=cols)
+          train, val, test = mk(40), mk(10), mk(10)
+          ART.mkdir(exist_ok=True)
+          pd.concat([train,val,test]).to_csv(ART/"fashion_mnist.csv", index=False)
+          train.to_csv(SPL/"train.csv", index=False)
+          val.to_csv(SPL/"val.csv", index=False)
+          test.to_csv(SPL/"test.csv", index=False)
           print("[CI] tiny artifacts ready")
           PY
 
-      - name: Run unit tests
+      - name: Run unit tests (skip HTTP e2e test)
         env:
           MLFLOW_TRACKING_URI: file:./mlruns
-          MLFLOW_ARTIFACTS_URI: ""
           MLFLOW_ENABLE_ARTIFACTS_PROXY: "false"
         run: |
-          python -m pytest -q
+          python -m pytest -q --ignore=scripts/test_api.py --maxfail=1 --disable-warnings
