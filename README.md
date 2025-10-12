@@ -1,5 +1,7 @@
 
 ML Project — Fashion-MNIST MLOps Workflow (MLflow + FastAPI)
+============================================================
+
 
 0) Environment (Conda)
 ----------------------
