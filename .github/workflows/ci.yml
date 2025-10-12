@@ -29,14 +29,35 @@ jobs:
           flake8 scripts app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       # Step 1 (tiny) เพื่อให้มี mlruns/**/reports/validation.json โดยไม่ต้องโหลด 70k จริง
+      # Step 1 (tiny) เพื่อสร้าง validation.json ใน mlruns
       - name: Step 1 - Data Validation (tiny)
         run: |
           python scripts/1_data_validation.py --tiny
+
+      # ✅ สร้าง artifacts/fashion_mnist.csv สำหรับสเต็ปถัดไป (กรณี --tiny ไม่ได้เซฟ CSV)
+      - name: Ensure tiny CSV for preprocessing
+        run: |
+          python - << 'PY'
+          import pathlib, numpy as np, pandas as pd
+          ART = pathlib.Path("artifacts"); ART.mkdir(parents=True, exist_ok=True)
+          csv = ART / "fashion_mnist.csv"
+          if not csv.exists():
+              d = 784
+              rng = np.random.default_rng(42)
+              X = rng.integers(0, 256, size=(300, d), dtype=np.uint16)
+              y = rng.integers(0, 10, size=(300, 1), dtype=np.int8)
+              cols = [f"px{i}" for i in range(d)] + ["label"]
+              pd.DataFrame(np.hstack([X, y]), columns=cols).to_csv(csv, index=False)
+              print("[CI] wrote", csv)
+          else:
+              print("[CI] reuse", csv)
+          PY
 
       # Step 2 เพื่อสร้าง artifacts/splits/*.csv (สเกล 0..1)
       - name: Step 2 - Preprocessing
         run: |
           python scripts/2_data_preprocessing.py
+
 
       - name: Run unit tests (exclude e2e)
         env:
