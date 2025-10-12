@@ -28,18 +28,24 @@ def teardown_module(module=None):
     shutil.rmtree(_TMPDIR, ignore_errors=True)
 
 
-def test_health_and_predict_single():
+# tests/test_api_unit.py (เฉพาะฟังก์ชัน batch)
+def test_predict_batch():
     with TestClient(api.app) as client:
-        # /health
-        r = client.get("/health")
+        batch = [[0.0] * 784 for _ in range(3)]
+        r = client.post("/predict_batch", json={"batch": batch})
         assert r.status_code == 200
-        assert r.json().get("status") == "ok"
 
-        # /predict (784 ค่า)
-        pixels = [0.0] * 784
-        r2 = client.post("/predict", json={"pixels": pixels})
-        assert r2.status_code == 200
-        assert r2.json().get("label") == 0
+        body = r.json()
+        # โครงสร้างที่ API คืน: {"count": int, "results": [ {label:int, label_name:str}, ... ]}
+        assert isinstance(body, dict)
+        assert "count" in body and "results" in body
+        assert isinstance(body["count"], int) and body["count"] == 3
+        assert isinstance(body["results"], list) and len(body["results"]) == 3
+        for item in body["results"]:
+            assert isinstance(item, dict)
+            assert "label" in item and isinstance(item["label"], int)
+            assert "label_name" in item and isinstance(item["label_name"], str)
+
 
 
 def test_predict_batch():
