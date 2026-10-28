@@ -50,6 +50,10 @@ python scripts/1_data_validation.py --tiny
 
 `--tiny` creates a validation report but does not write `artifacts/fashion_mnist.csv`; preprocessing therefore needs an existing CSV. The CI file contains a separate synthetic CSV creation step. Tests that inspect splits or reports require those artifacts, while API tests have their own model and dependency requirements. The configured CI is not a guarantee of a passing run.
 
+## Container
+
+The Dockerfile configures the API to listen on `0.0.0.0:8080`, matching its exposed port. The exported `artifacts/deploy/fashion_mnist_clf` model directory must be available inside the container at startup. Container build, startup and inference have not been verified in this update.
+
 ## Evaluation limits
 
 The test split measures the selected candidate on this dataset, not deployment performance or performance on photographs from a different distribution. The export and serving path should be verified in the intended environment. The threshold in the evaluation script is a reporting flag, not proof that a model is production-ready. The dataset is referenced as Fashion-MNIST via OpenML; check its terms separately before reuse.
