@@ -1,6 +1,13 @@
-# Fashion-MNIST MLOps
-
-A coursework pipeline for Fashion-MNIST validation, model selection, MLflow tracking and FastAPI inference.
+<div align="center">
+  <h1>Fashion-MNIST MLOps</h1>
+  <p>A coursework pipeline for Fashion-MNIST validation, model selection, MLflow tracking and FastAPI inference.</p>
+  <p>
+    <img src="https://img.shields.io/badge/scikit--learn-ML-F7931E?style=flat-square" alt="scikit-learn">
+    <img src="https://img.shields.io/badge/MLflow-Tracking-0194E2?style=flat-square" alt="MLflow tracking">
+    <img src="https://img.shields.io/badge/FastAPI-Inference-009688?style=flat-square" alt="FastAPI inference">
+  </p>
+  <p><a href="#workflow">Workflow</a> · <a href="#project-map">Project map</a> · <a href="#run-locally">Run locally</a> · <a href="#evaluation-limits">Evaluation limits</a></p>
+</div>
 
 ## Workflow
 
